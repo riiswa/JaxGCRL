@@ -19,6 +19,9 @@ from jaxgcrl.envs.ant_ball import AntBall
 from jaxgcrl.envs.ant_ball_maze import AntBallMaze
 from jaxgcrl.envs.ant_maze import AntMaze
 from jaxgcrl.envs.ant_push import AntPush
+from jaxgcrl.envs.custom.cartpole import CartPole
+from jaxgcrl.envs.custom.mountain_car import ContinuousMountainCar
+from jaxgcrl.envs.custom.wrappers import GymnaxToBraxWrapper
 from jaxgcrl.envs.half_cheetah import Halfcheetah
 from jaxgcrl.envs.humanoid import Humanoid
 from jaxgcrl.envs.humanoid_maze import HumanoidMaze
@@ -61,6 +64,8 @@ legal_envs = (
     "simple_u_maze",
     "simple_big_maze",
     "simple_hardest_maze",
+    "mountain_car",
+    "cartpole"
 )
 
 
@@ -127,6 +132,10 @@ def create_env(env_name: str, backend: str = None, **kwargs) -> object:
         env = ArmBinpickEasy(backend=backend or "mjx")
     elif env_name == "arm_binpick_hard":
         env = ArmBinpickHard(backend=backend or "mjx")
+    elif env_name == "mountain_car":
+        env = GymnaxToBraxWrapper(ContinuousMountainCar())
+    elif env_name == "cartpole":
+        env = CartPole(backend=backend or "generalized")
     else:
         raise ValueError(f"Unknown environment: {env_name}")
     return env
