@@ -41,7 +41,7 @@ from jaxgcrl.utils.evaluator import Evaluator
 from jaxgcrl.utils.replay_buffer import TrajectoryUniformSamplingQueue
 
 from . import networks
-from .exploration import compute_bonus, update_bonus_on_step, update_bonus, init_exploration_bonus, \
+from .exploration import compute_bonus, update_bonus, init_exploration_bonus, \
     ExplorationBonusParams
 
 Metrics = types.Metrics
@@ -90,13 +90,13 @@ def actor_step(
         )
 
     # Update bonus state for step-based updates (like RNK)
-    new_exploration_bonus_state = update_bonus_on_step(
-        exploration_bonus_type,
-        exploration_bonus_state,
-        nstate.obs,
-        exploration_bonus_params,
-        normalizer_params
-    )
+    # new_exploration_bonus_state = update_bonus_on_step(
+    #     exploration_bonus_type,
+    #     exploration_bonus_state,
+    #     nstate.obs,
+    #     exploration_bonus_params,
+    #     normalizer_params
+    # )
 
     state_extras = {x: nstate.info[x] for x in extra_fields}
     return nstate, Transition(  # pytype: disable=wrong-arg-types  # jax-ndarray
@@ -107,7 +107,7 @@ def actor_step(
         discount=1 - nstate.done,
         next_observation=nstate.obs,
         extras={"policy_extras": policy_extras, "state_extras": state_extras},
-    ), new_exploration_bonus_state
+    ), exploration_bonus_state
 
 
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -249,14 +249,14 @@ class ExplorationSAC:
     discounting: float = 0.99
     batch_size: int = 256
     normalize_observations: bool = False
-    reward_scaling: float = 5.0
+    reward_scaling: float = 10.0
     # target update rate
     tau: float = 0.005
     min_replay_size: int = 1000
-    max_replay_size: Optional[int] = 10_000
+    max_replay_size: Optional[int] = 100_000
     deterministic_eval: bool = False
-    train_step_multiplier: int = 128
-    unroll_length: int = 50
+    train_step_multiplier: int = 16
+    unroll_length: int = 64
     h_dim: int = 256
     n_hidden: int = 2
     # layer norm
@@ -497,9 +497,9 @@ class ExplorationSAC:
 
             # Add exploration bonus metrics
             if training_state.exploration_bonus_state is not None:
-                metrics.update(bonus_metrics)
-                metrics["bonus_mean"] = jnp.mean(transitions.bonus)
-                metrics["bonus_std"] = jnp.std(transitions.bonus)
+                metrics.update({f"bonus/{key}": value for key, value in bonus_metrics.items()})
+                # metrics["bonus_mean"] = jnp.mean(transitions.bonus)
+                # metrics["bonus_std"] = jnp.std(transitions.bonus)
 
             new_training_state = TrainingState(
                 policy_optimizer_state=policy_optimizer_state,
@@ -530,6 +530,7 @@ class ExplorationSAC:
             Union[envs.State, envs_v1.State],
             ReplayBufferState,
             Optional[Any],
+            Dict
         ]:
             policy = make_policy((normalizer_params, policy_params))
 
@@ -589,8 +590,16 @@ class ExplorationSAC:
                     final_bonus_state = final_bonus_state.replace(
                         bonus_rms=new_bonus_rms
                     )
+
+            metrics = {
+                "bonus/mean": data.bonus.mean(),
+                "bonus/std": data.bonus.std(),
+                "bonus/max": data.bonus.max(),
+                "bonus/min": data.bonus.min(),
+            }
+
             buffer_state = replay_buffer.insert(buffer_state, data)
-            return normalizer_params, env_state, buffer_state, final_bonus_state
+            return normalizer_params, env_state, buffer_state, final_bonus_state, metrics
 
         def training_step(
             training_state: TrainingState,
@@ -599,7 +608,7 @@ class ExplorationSAC:
             key: PRNGKey,
         ) -> Tuple[TrainingState, Union[envs.State, envs_v1.State], ReplayBufferState, Metrics]:
             experience_key, training_key = jax.random.split(key)
-            normalizer_params, env_state, buffer_state, new_exploration_bonus_state = get_experience(
+            normalizer_params, env_state, buffer_state, new_exploration_bonus_state, bonus_metrics = get_experience(
                 training_state.normalizer_params,
                 training_state.policy_params,
                 env_state,
@@ -616,7 +625,7 @@ class ExplorationSAC:
             )
 
             training_state, buffer_state, metrics = train_steps(training_state, buffer_state, training_key)
-            return training_state, env_state, buffer_state, metrics
+            return training_state, env_state, buffer_state, {**metrics, **bonus_metrics}
 
         def prefill_replay_buffer(
             training_state: TrainingState,
@@ -628,7 +637,7 @@ class ExplorationSAC:
                 del unused
                 training_state, env_state, buffer_state, key = carry
                 key, new_key = jax.random.split(key)
-                new_normalizer_params, env_state, buffer_state, _ = get_experience(
+                new_normalizer_params, env_state, buffer_state, _, _ = get_experience(
                     training_state.normalizer_params,
                     training_state.policy_params,
                     env_state,

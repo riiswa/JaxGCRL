@@ -8,8 +8,8 @@
 eval "$(conda shell.bash hook)"
 conda activate JaxGCRL
 
-method=exploration-sac
-env=cartpole
+method=exploration-ppo
+env=cheetah
 
 #for seed in 1 2 3 4 5 ; do
   #XLA_PYTHON_CLIENT_MEM_FRACTION=.95 MUJOCO_GL=egl CUDA_VISIBLE_DEVICES=0

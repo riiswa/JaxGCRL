@@ -5,9 +5,10 @@ from flax.struct import dataclass
 from jaxgcrl.agents import CRL, PPO, SAC, TD3, ExplorationSAC
 
 from .env import legal_envs
+from ..agents.exploration import ExplorationPPO
 
 # agent configurations
-AgentConfig = Union[CRL, PPO, SAC, TD3, ExplorationSAC]
+AgentConfig = Union[CRL, PPO, SAC, TD3, ExplorationSAC, ExplorationPPO]
 
 
 @dataclass
@@ -40,7 +41,7 @@ class RunConfig:
     env: Literal[legal_envs]
 
     # total number of environment steps to run
-    total_env_steps: int = 1_000_000
+    total_env_steps: int = 10_000_000
 
     # maximum length of an episode
     episode_length: int = 1000
@@ -49,7 +50,7 @@ class RunConfig:
     eval_env: Optional[Literal[legal_envs]] = None
 
     # number of envs to run in parallel during training
-    num_envs: int = 32
+    num_envs: int = 2048
 
     # number of envs to run in parallel during evaluation
     num_eval_envs: int = 100
@@ -57,7 +58,7 @@ class RunConfig:
     action_repeat: int = 1
 
     # total number of evals during training
-    num_evals: int = 100
+    num_evals: int = 500
 
     seed: int = 0
     backend: Optional[Literal["mjx", "spring", "positional", "generalized"]] = None

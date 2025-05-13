@@ -80,16 +80,30 @@ def main(config: Config):
         # "eval/episode_success_any",
         # "eval/episode_success_easy",
         # "eval/episode_success_hard",
-        "training/actor_loss",
-        "training/log_alpha",
-        "training/alpha_loss",
-        "training/critic_loss",
-        "training/entropy",
+
+        # "training/actor_loss",
+        # "training/log_alpha",
+        # "training/alpha_loss",
+        # "training/critic_loss",
+        # "training/entropy",
+
         "training/sps",
-        "training/rnd_loss",
-        "training/rnk_condition_number",
-        "training/bonus_mean",
-        "training/bonus_std"
+        # "training/rnd_loss",
+        # "training/rnk_condition_number",
+        # "training/bonus_mean",
+        # "training/bonus_std"
+
+        "training/bonus/loss",
+        "training/bonus/cond",
+        "training/bonus/mean",
+        "training/bonus/max",
+        "training/bonus/std",
+        "training/intrinsic_v_loss",
+        "training/extrinsic_v_loss",
+        "training/total_loss",
+        "training/policy_loss",
+        "training/v_loss",
+        "training/entropy_loss"
     ]
 
     metrics_recorder = MetricsRecorder(

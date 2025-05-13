@@ -14,7 +14,7 @@ from brax.training.acme import running_statistics, specs
 @struct.dataclass
 class ExplorationBonusParams:
     """Base parameters for exploration bonuses."""
-    reward_scale: float = 1.0
+    reward_scale: float = 0.5
     normalize_bonus: bool = False
     bonus_normalize_observations: bool = True
 
@@ -238,7 +238,7 @@ def update_rnd(
         apply_fn=rnd_state.apply_fn
     )
 
-    return new_rnd_state, {"rnd_loss": loss}
+    return new_rnd_state, {"loss": loss}
 
 
 # Pure functions for RNK
@@ -397,9 +397,25 @@ def update_rnk(
     pmap_axis_name: str = "i"
 ) -> Tuple[RNKState, Dict[str, Any]]:
     """RNK doesn't need updates during training."""
-    # Just return metrics about the current state
-    metrics = {"rnk_condition_number": jnp.linalg.cond(rnk_state.Phi)}
-    return rnk_state, metrics
+    # Preprocess observations if normalizer is provided
+    if normalizer_params is not None and params.bonus_normalize_observations:
+        observations = running_statistics.normalize(
+            observations, normalizer_params
+        )
+
+    # Extract features using stored apply function
+    phi = rnk_state.apply_fn(rnk_state.params, observations)
+
+    # Update Phi using Woodbury identity
+    new_Phi = woodbury_update_stable(rnk_state.Phi, phi)
+
+    # Create updated state (params and apply_fn stay the same)
+    return RNKState(
+        params=rnk_state.params,
+        Phi=new_Phi,
+        bonus_rms=rnk_state.bonus_rms,
+        apply_fn=rnk_state.apply_fn
+    ), {"cond": jnp.linalg.cond(new_Phi)}
 
 
 # Dispatch functions for different bonus types
