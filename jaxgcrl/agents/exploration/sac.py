@@ -42,7 +42,7 @@ from jaxgcrl.utils.replay_buffer import TrajectoryUniformSamplingQueue
 
 from . import networks
 from .exploration import compute_bonus, update_bonus, init_exploration_bonus, \
-    ExplorationBonusParams
+    ExplorationBonusParams, update_bonus_on_step
 
 Metrics = types.Metrics
 Env = Union[envs.Env, envs_v1.Env, envs_v1.Wrapper]
@@ -252,9 +252,9 @@ class ExplorationSAC:
     reward_scaling: float = 10.0
     # target update rate
     tau: float = 0.005
-    min_replay_size: int = 1000
-    max_replay_size: Optional[int] = 100_000
-    deterministic_eval: bool = False
+    min_replay_size: int = int(5e3)
+    max_replay_size: Optional[int] = None
+    deterministic_eval: bool = True
     train_step_multiplier: int = 16
     unroll_length: int = 64
     h_dim: int = 256
@@ -470,7 +470,7 @@ class ExplorationSAC:
             bonus_metrics = {}
             new_exploration_bonus_state = training_state.exploration_bonus_state
 
-            if training_state.exploration_bonus_state is not None and self.exploration_bonus_type != "none":
+            if training_state.exploration_bonus_state is not None and self.exploration_bonus_type == "rnd":
                 # Update bonus state during training phase (for RND)
                 new_exploration_bonus_state, bonus_metrics = update_bonus(
                     self.exploration_bonus_type,
@@ -558,11 +558,13 @@ class ExplorationSAC:
 
             (env_state, _, final_bonus_state), data = jax.lax.scan(f, init_carry, (), length=self.unroll_length)
 
+            flatten_data = jax.tree_util.tree_map(
+                lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
+            ) # so that batch_size*unroll_length is the first dimension
+
             normalizer_params = running_statistics.update(
                 normalizer_params,
-                jax.tree_util.tree_map(
-                    lambda x: jnp.reshape(x, (-1,) + x.shape[2:]), data
-                ).observation,  # so that batch_size*unroll_length is the first dimension
+                flatten_data.observation,
                 pmap_axis_name=_PMAP_AXIS_NAME,
             )
 
@@ -590,6 +592,14 @@ class ExplorationSAC:
                     final_bonus_state = final_bonus_state.replace(
                         bonus_rms=new_bonus_rms
                     )
+            if exploration_bonus_type == "rnk" and final_bonus_state is not None:
+                final_bonus_state = update_bonus_on_step(
+                    self.exploration_bonus_type,
+                    final_bonus_state,
+                    flatten_data.observation,
+                    self.exploration_bonus_params,
+                    normalizer_params,
+                )
 
             metrics = {
                 "bonus/mean": data.bonus.mean(),

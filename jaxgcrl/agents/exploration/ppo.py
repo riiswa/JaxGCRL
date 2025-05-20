@@ -203,19 +203,21 @@ class ExplorationPPO:
     learning_rate: float = 3e-4
     entropy_cost: float = 1e-3
     discounting: float = 0.99
-    unroll_length: int = 5
-    batch_size: int = 1024
-    num_minibatches: int = 16
-    num_updates_per_batch: int = 4
+    unroll_length: int = 128
+    batch_size: int = 16 # Not used
+    num_minibatches: int = 32
+    num_updates_per_batch: int = 10
     num_resets_per_eval: int = 0
     normalize_observations: bool = True
-    reward_scaling: float = 2.
-    clipping_epsilon: float = 0.3
+    reward_scaling: float = 10.
+    clipping_epsilon: float = 0.2
     gae_lambda: float = 0.95
-    deterministic_eval: bool = False
+    deterministic_eval: bool = True
     normalize_advantage: bool = True
     restore_checkpoint_path: Optional[str] = None
     train_step_multiplier = 1
+    anneal_lr: bool = True
+    eval_frequency = 2
 
     # Add exploration bonus parameters
     exploration_bonus_type: str = "none"  # options: "none", "rnd", "rnk"
@@ -276,7 +278,8 @@ class ExplorationPPO:
         Returns:
           Tuple of (make_policy function, network params, metrics)
         """
-        assert self.batch_size * self.num_minibatches % config.num_envs == 0
+        # CHANGE: assert self.batch_size * self.num_minibatches % config.num_envs == 0
+        assert config.num_envs % self.num_minibatches == 0
         xt = time.time()
         network_factory = ppo_networks.make_ppo_networks
 
@@ -298,15 +301,20 @@ class ExplorationPPO:
         device_count = local_devices_to_use * process_count
 
         # The number of train_env steps executed for every training step.
-        utd_ratio = self.batch_size * self.unroll_length * self.num_minibatches * config.action_repeat
+        # CHANGE: utd_ratio = self.batch_size * self.unroll_length * self.num_minibatches * config.action_repeat
+        utd_ratio = config.num_envs * self.unroll_length * config.action_repeat
         print("UTD Ratio:", utd_ratio)
-        num_evals_after_init = max(config.num_evals - 1, 1)
+
+        num_evals_after_init = max(np.ceil(config.total_env_steps / utd_ratio / self.eval_frequency).astype(int), 1)
+
+        #num_evals_after_init = max(config.num_evals - 1, 1)
         # The number of training_step calls per training_epoch call.
         # equals to ceil(total_env_steps / (num_evals * utd_ratio *
         #                                 num_resets_per_eval))
         num_training_steps_per_epoch = np.ceil(
             config.total_env_steps / (num_evals_after_init * utd_ratio * max(self.num_resets_per_eval, 1))
         ).astype(int)
+
 
         key = jax.random.PRNGKey(config.seed)
         global_key, local_key = jax.random.split(key)
@@ -361,10 +369,33 @@ class ExplorationPPO:
 
         make_policy = ppo_networks.make_inference_fn(ppo_network)
 
-        optimizer = optax.chain(
-            optax.clip_by_global_norm(0.5),
-            optax.adam(learning_rate=self.learning_rate)
-        )
+        if self.anneal_lr:
+            total_iterations = (
+                    num_evals_after_init *
+                    max(self.num_resets_per_eval, 1) *
+                    num_training_steps_per_epoch *
+                    self.num_updates_per_batch *
+                    self.num_minibatches
+            )
+
+            # Create learning rate schedule
+            def lr_schedule(step):
+                frac = 1.0 - (step - 1.0) / total_iterations
+                # Ensure learning rate doesn't go negative
+                frac = jnp.maximum(0.0, frac)
+                return frac * self.learning_rate
+
+            # Use schedule with optimizer
+            optimizer = optax.chain(
+                optax.clip_by_global_norm(0.5),
+                optax.adam(learning_rate=lr_schedule)
+            )
+        else:
+            # Use constant learning rate
+            optimizer = optax.chain(
+                optax.clip_by_global_norm(0.5),
+                optax.adam(learning_rate=self.learning_rate)
+            )
 
         loss_fn = functools.partial(
             ppo_losses.compute_ppo_loss,
@@ -425,6 +456,7 @@ class ExplorationPPO:
 
             def convert_data(x: jnp.ndarray):
                 x = jax.random.permutation(key_perm, x)
+                # Reshape into num_minibatches batches
                 x = jnp.reshape(x, (self.num_minibatches, -1) + x.shape[1:])
                 return x
 
@@ -476,7 +508,7 @@ class ExplorationPPO:
                 f,
                 initial_carry,
                 (),
-                length=self.batch_size * self.num_minibatches // config.num_envs,
+                length=1, # CHANGE: length=self.batch_size * self.num_minibatches // config.num_envs
             )
 
             # Update the bonus state in training_state
@@ -513,6 +545,7 @@ class ExplorationPPO:
                 metrics =  {
                     "bonus/mean": jnp.mean(data.intrinsic_reward),
                     "bonus/max": jnp.max(data.intrinsic_reward),
+                    "bonus/std": jnp.std(data.intrinsic_reward),
                     **metrics
                 }
 
@@ -566,6 +599,12 @@ class ExplorationPPO:
                     loss_metrics[f'bonus/{k}'] = v
 
             loss_metrics = jax.tree_util.tree_map(jnp.mean, loss_metrics)
+
+            if self.anneal_lr:
+                loss_metrics["learning_rate"] = lr_schedule(training_state.optimizer_state[1][1].count)
+            else:
+                loss_metrics["learning_rate"] = self.learning_rate
+
             return training_state, state, loss_metrics
 
         training_epoch = jax.pmap(training_epoch, axis_name=_PMAP_AXIS_NAME)

@@ -21,7 +21,8 @@ from jaxgcrl.envs.ant_maze import AntMaze
 from jaxgcrl.envs.ant_push import AntPush
 from jaxgcrl.envs.custom.cartpole import CartPole
 from jaxgcrl.envs.custom.mountain_car import ContinuousMountainCar
-from jaxgcrl.envs.custom.wrappers import GymnaxToBraxWrapper
+from jaxgcrl.envs.custom.sparse_ant import SparseAnt
+from jaxgcrl.envs.custom.wrappers import GymnaxToBraxWrapper, MilestoneRewardWrapper
 from jaxgcrl.envs.half_cheetah import Halfcheetah
 from jaxgcrl.envs.humanoid import Humanoid
 from jaxgcrl.envs.humanoid_maze import HumanoidMaze
@@ -65,7 +66,10 @@ legal_envs = (
     "simple_big_maze",
     "simple_hardest_maze",
     "mountain_car",
-    "cartpole"
+    "cartpole",
+    "sparse_ant",
+    "sparse_cheetah",
+    "sparse_hopper"
 )
 
 
@@ -136,6 +140,15 @@ def create_env(env_name: str, backend: str = None, **kwargs) -> object:
         env = GymnaxToBraxWrapper(ContinuousMountainCar())
     elif env_name == "cartpole":
         env = CartPole(backend=backend or "generalized")
+    elif env_name == "sparse_ant":
+        from brax.envs.ant import Ant as BraxAnt
+        env = MilestoneRewardWrapper(BraxAnt(backend=backend or "spring"))
+    elif env_name == "sparse_cheetah":
+        from brax.envs.half_cheetah import Halfcheetah as BraxHalfcheetah
+        env = MilestoneRewardWrapper(BraxHalfcheetah(backend=backend or "mjx"), milestone_distance=5.0)
+    elif env_name == "sparse_hopper":
+        from brax.envs.hopper import Hopper as BraxHopper
+        env = MilestoneRewardWrapper(BraxHopper(backend=backend or "spring"))
     else:
         raise ValueError(f"Unknown environment: {env_name}")
     return env

@@ -103,7 +103,8 @@ def main(config: Config):
         "training/total_loss",
         "training/policy_loss",
         "training/v_loss",
-        "training/entropy_loss"
+        "training/entropy_loss",
+        "training/learning_rate"
     ]
 
     metrics_recorder = MetricsRecorder(
